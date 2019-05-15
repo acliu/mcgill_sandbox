@@ -337,8 +337,13 @@ p3 = ax_cdf_single_delay.plot(data,cdf)
 ax_cdf_single_delay.set_xlabel(r"$P(k)\ \rm [mK^2\ h^{-3}\ Mpc^3]$", fontsize=14)
 ax_cdf_single_delay.set_ylabel("Cumulative probability", fontsize=14)
 
-plt.savefig("cdfsingle.png")
+
+
 # In[ ]:
+
+#Here is my modification of my code
+
+
 
 
 
