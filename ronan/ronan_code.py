@@ -1,9 +1,4 @@
-#!/usr/bin/env python
-# coding: utf-8
-
 # # Simple power spectrum estimation from an input dataset
-
-# In[1]:
 
 import matplotlib
 matplotlib.use('Agg')
@@ -23,9 +18,6 @@ import scipy
 # 
 # At least two `UVData` objects must be specified, these could be different datasets, or just copies of a single dataset, given the use-case. In what follows, we will use only one data set and produce two copies of it, but will shift the second dataset by one time integration and interleave it relative to the first, such that we can form auto-baseline power spectra without noise-bias. 
 
-# In[2]:
-
-
 # select the data file to load
 dfile = os.path.join(DATA_PATH, 'eorsky_3.00hours_Nside128_sigma0.03_fwhm12.13_uv.uvh5')
 #dfile = os.path.join(DATA_PATH, 'zen.all.xx.LST.1.06964.uvA')
@@ -34,18 +26,9 @@ dfile = os.path.join(DATA_PATH, 'eorsky_3.00hours_Nside128_sigma0.03_fwhm12.13_u
 uvd = UVData()
 uvd.read(dfile)
 
-
-# In[37]:
-
-
 # Check which baselines are available
 print(uvd.Nfreqs)
-print(uvd.get_antpairpols())
-
-
-# ## Define a cosmology
-
-# In[4]:
+pol = uvd.get_antpairpols()[0][2]
 
 
 # Instantiate a Cosmo Conversions object
@@ -55,297 +38,320 @@ print(cosmo)
 
 
 # Instantiate a beam object, and attach the cosmo conversions object onto it.
-
-# In[5]:
-
-
 # List of beamfile to load. This is a healpix map.
+
 beamfile = os.path.join(DATA_PATH, 'HERA_NF_dipole_power.beamfits')
 beam_freqs = np.linspace(0, 384e6, 384)
+
 # intantiate beam and pass cosmology, if not fed, a default Planck cosmology will be assumed
 #uvb = hp.pspecbeam.PSpecBeamUV(beamfile, cosmo=cosmo)
+
 uvb = hp.PSpecBeamGauss(fwhm=0.1, beam_freqs=beam_freqs)
 
 
 # Next convert from Jy units to mK. This involves calculating the effective beam area (see HERA Memo #27 and #43), which can be done with the beam object we instantiated earlier.
 
-# In[6]:
-
-
 # find conversion factor from Jy to mK
-Jy_to_mK = uvb.Jy_to_mK(np.unique(uvd.freq_array), pol='XX')
+
+Jy_to_mK = uvb.Jy_to_mK(np.unique(uvd.freq_array), pol=pol)
 
 # reshape to appropriately match a UVData.data_array object and multiply in!
-uvd.data_array *= Jy_to_mK[None, None, :, None]
 
+uvd.data_array *= Jy_to_mK[None, None, :, None]
 
 # Configure data and instantiate a `PSpecData` object, while also feeding in the beam object.
 
-# In[7]:
-
-
 # slide the time axis of uvd by one integration
+
 uvd1 = uvd.select(times=np.unique(uvd.time_array)[:-1:2], inplace=False)
 uvd2 = uvd.select(times=np.unique(uvd.time_array)[1::2], inplace=False)
 
 # Create a new PSpecData object, and don't forget to feed the beam object
 ds = hp.PSpecData(dsets=[uvd1, uvd2], wgts=[None, None], beam=uvb)
 
-
-# ## Phase second `dset` to first `dset`
-
-# In[8]:
-
-
 # Because the LST integrations are offset by more than ~15 seconds we will get a warning
 # but this is okay b/c it is still **significantly** less than the beam-crossing time and we are using short
 # baselines...
 
 # here we phase all datasets in dsets to the zeroth dataset
+
 ds.rephase_to_dset(0)
 
-
-# In[9]:
-
-
 # change units of UVData objects
+
 ds.dsets[0].vis_units = 'mK'
 ds.dsets[1].vis_units = 'mK'
 
-
-# ## Estimating the power spectrum for a handful of baseline pairs (auto-baseline pspec)
-
-# In[38]:
-
-
 # Specify which baselines to include
+
 baselines = [(0, 11), (0, 12), (11, 12)]
 baselines1, baselines2, blpairs = hp.utils.construct_blpairs(baselines, exclude_auto_bls=True,exclude_permutations=True)
-
-
-# In[14]:
-
 
 # Here we either have the choice between forming pairs of the same baselines or
 # to form pairs of different baselines measuring with same spectral window (redundant baselines).
 
 #uvp = ds.pspec(baselines, baselines, (0, 1), [('pI', 'pI')], spw_ranges=[(0, 84)], input_data_weight='identity',norm='I', taper='blackman-harris', verbose=True)
 
-uvp = ds.pspec(baselines1, baselines2, (0, 1), [('pI', 'pI')], spw_ranges=[(0, 84)], input_data_weight='identity',norm='I', taper='blackman-harris', verbose=True)
-
-
-# In[39]:
-
+uvp = ds.pspec(baselines1, baselines2, (0, 1), [(pol, pol)], spw_ranges=[(0, 84)], input_data_weight='identity',norm='I', taper='blackman-harris', verbose=True)
 
 # This is how we can get the delay spectra data. We can also verify the dimensions of the data set.
 
-key = (0, ((0,11),(0,12)), ('pI', 'pI'))
+key = (0, ((0,11),(0,12)), (pol, pol))
 
 # output should be shape (Ntimes, Ndlys)
+
 print(uvp.get_data(key).shape)
 
 # we can also access data by feeding a dictionary
-key = {'polpair':('pI','pI'), 'spw': 0, 'blpair':((0, 11), (0, 12))}
+
+key = {'polpair':(pol,pol), 'spw': 0, 'blpair':((0, 11), (0, 12))}
 print(uvp.get_data(key).shape)
-
-
-# In[40]:
-
 
 # get power spectrum units
 print("pspec units: ", uvp.units)
 # get weighting
 print("pspec weighting: ", uvp.weighting)
 
-
-# In[17]:
-
-
 print(uvp.cosmo)
 
-
-# ## Plotting
-
-# In[41]:
-
-
 # Here, we can plot power spectrums based on a spectra frequency range, a baseline pair and the polarization of our telescope.
-fig, ax = plt.subplots(2,figsize=(12,11))
+# Unfortunately for the moment, noise generation and average power do not seem to work well with this new code.
+# So they were commented out.
+blpairs = uvp.get_blpairs()
+blp_group = [sorted(np.unique(uvp.blpair_array))]
 
-spw = 0
-blp =((0, 11), (0,12))
-key = (spw, blp, 'pI')
-dlys = uvp.get_dlys(spw) * 1e9
-power = np.abs(np.real(uvp.get_data(key)))
-
+Tsys = 300
+color=['r','b','g']
 # We can also choose to plot the power spectrum over a range of different time values.
-p1 = ax[0].plot(dlys, power.T[:,100:110])
-ax[0].set_yscale('log')
-ax[0].grid()
-ax[0].set_xlabel("delay [ns]", fontsize=14)
-ax[0].set_ylabel(r"$P(k)\ \rm [mK^2\ h^{-3}\ Mpc^3]$", fontsize=14)
-ax[0].set_title("spw : {}, blpair : {}, pol : {}".format(*key), fontsize=14)
 
-# If we wish to see the total power received from different delays, we can sum up the powers over all time.
-p1 = ax[1].plot(dlys, power.T.sum(axis=1))
-ax[1].set_yscale('log')
-ax[1].grid()
-ax[1].set_xlabel("delay [ns]", fontsize=14)
-ax[1].set_ylabel("Total " + r"$P(k)\ \rm [mK^2\ h^{-3}\ Mpc^3]$", fontsize=14)
-ax[1].set_title("spw : {}, blpair : {}, pol : {}".format(*key), fontsize=14)
+# We can choose which result the user wants to see. Option 0 corresponds to the residuals between all possible baseline pairs,
+# option 1 corresponds to simply displaying the power spectrum of each baseline pairs in separate plots.
+# Option 2 corresponds to displaying power spectrum along side the average power and standard deviation of the power over time.
 
-plt.savefig("ps_total.png")
-# In[42]:
-
-
-# Here, we wish to calculate the difference in power between all possible combinations of baseline pairs over all times. 
-# This will allow us to observe any differing power levels between two baseline configurations.
+print("Please select one of the following options : \n")
+print("Input 0 for power residuals between all baseline pairs. 1 to simply display all possible power spectrums.")
+print("2 to display power spectrum alongside a plot of the average power and standard deviation over time.")
+option = input()
 
 from itertools import combinations
-i=0
-for comb in combinations(uvp.get_blpairs(), 2):
-    i=i+1
-fig, ax_resi = plt.subplots(i,figsize=(12,14))
-i=0
-for comb in combinations(uvp.get_blpairs(), 2):
-    
-    power_A = np.abs(np.real(uvp.get_data(key=(spw, comb[0], 'pI'))))
-    power_B = np.abs(np.real(uvp.get_data(key=(spw, comb[1], 'pI'))))
-    power_residual_pairs = power_A-power_B
-    
-    ax_resi[i].plot(dlys, power_residual_pairs.T[:,400:410])
-    ax_resi[i].set_title("Residuals between " + str(comb[0]) + " and " + str(comb[1]) + " powers", fontsize=14)
-    ax_resi[i].grid()
-    ax_resi[i].set_ylabel(r"$P(k)\ \rm [mK^2\ h^{-3}\ Mpc^3]$", fontsize=14)
-    i=i+1
 
-plt.savefig("resibaselines.png")
-# In[43]:
+if option == 0 :
+	print("Select spectral window index from " + str(len(uvp.spw_array)) + " choices : ")
+	spw = input()
+	dlys = uvp.get_dlys(spw) * 1e9
+	
+	# Here, we wish to calculate the difference in power between all possible combinations of baseline pairs over all times. 
+	# This will allow us to observe any differing power levels between two baseline configurations.
+	i=0
+	for comb in combinations(uvp.get_blpairs(), 2):
+		i=i+1
+	fig, ax_resi = plt.subplots(i,figsize=(12,14))
+	i=0
+	for comb in combinations(uvp.get_blpairs(), 2):
+
+		power_A = np.abs(np.real(uvp.get_data(key=(spw, comb[0], pol))))
+		power_B = np.abs(np.real(uvp.get_data(key=(spw, comb[1], pol))))
+		power_residual_pairs = power_A-power_B
+
+		ax_resi[i].plot(dlys, power_residual_pairs.T[:,400:410])
+		ax_resi[i].set_title("Residuals between " + str(comb[0]) + " and " + str(comb[1]) + " powers", fontsize=14)
+		ax_resi[i].grid()
+		ax_resi[i].set_ylabel(r"$P(k)\ \rm [mK^2\ h^{-3}\ Mpc^3]$", fontsize=14)
+		i=i+1
+
+if option == 1:
+	print("Select spectral window index from " + str(len(uvp.spw_array)) + " choices : ")
+	spw = input()
+	fig, ax = plt.subplots(len(blpairs),1,figsize=(12,14))
+	for i in range(0,len(blpairs)):
+		dlys = uvp.get_dlys(spw) * 1e9
+		key = (spw, blpairs[i], pol)
+		power = np.abs(np.real(uvp.get_data(key)))
+
+		ax[i].plot(dlys, power.T[:,0:10])
+		ax[i].set_yscale('log')
+		ax[i].grid()
+		ax[i].set_xlabel("delay [ns]", fontsize=14)
+		ax[i].set_ylabel(r"$P(k)\ \rm [mK^2\ h^{-3}\ Mpc^3]$", fontsize=14)
+		ax[i].set_title("spw : {}, blpair : {}, pol : {}".format(*key), fontsize=14)
+
+	plt.tight_layout()
+
+if option == 2:
+    
+    fig, ax = plt.subplots(2*len(blpairs),1,figsize=(12,20))
+    for i in range(0,len(blpairs)):
+        k = 2*i
+        ax_std = ax[k+1].twinx()
+        for j in range(0,len(uvp.get_spw_ranges())):
+            dlys = uvp.get_dlys(j) * 1e9
+            key = (j, blpairs[i], pol)
+            power = np.abs(np.real(uvp.get_data(key)))
+            time_array = np.linspace(0,power.T.shape[1],power.T.shape[1])
+            #P_N = uvp.generate_noise_spectra(spw, pol, Tsys)
+            #P_N = P_N[uvp.antnums_to_blpair(blpairs[i])]
+            #uvp2 = uvp.average_spectra(blpair_groups=blp_group, time_avg=True, inplace=False)
+            #avg_power = np.abs(np.real(uvp2.get_data(key)))
+
+            std_mean_all_time = np.mean(np.std(power.T[:,190:200],axis=0))/np.sqrt(10)
+            std_mean = np.std(np.mean(power.T[:,190:200],axis=1))
+
+            ax[k].plot(dlys, power.T[:,0:10])
+            #ax[i].plot(dlys, avg_power.T, color='k')
+            #ax[k].set_prop_cycle(None)
+            #ax[k].plot(dlys, P_N.T,color='k', ls='--', lw=3)
+
+            # If we wish to see the total power received from different delays, we can sum up the powers over all time.
+            ax[k+1].plot(time_array, np.mean(power.T,axis=0),ls='--',lw=3,label="Average power")
+
+            # We could also analyze the evolution of the standard deviation of the power at one time to look for patterns.
+
+            ax_std.plot(time_array, np.std(power.T,axis=0),lw=3,label="STD")
+        ax[k].set_yscale('log')
+        ax[k].grid()
+        ax[k].set_xlabel("delay [ns]", fontsize=14)
+        ax[k].set_ylabel(r"$P(k)\ \rm [mK^2\ h^{-3}\ Mpc^3]$", fontsize=14)
+        ax[k].set_title("spw : {}, blpair : {}, pol : {}".format(*key), fontsize=14)
+
+        ax[k+1].grid()
+        ax[k+1].set_xlabel("Time", fontsize=14)
+        ax[k+1].set_ylabel("Average " + r"$P(k)$", fontsize=14)
+        ax[k+1].set_title("spw : {}, blpair : {}, pol : {}".format(*key), fontsize=14)
+        ax[k+1].legend()
+        plt.tight_layout()
+        ax_std.set_ylabel("Standard deviation", fontsize=14)
+        ax_std.legend()
+        print("spw : {}, blpair : {}, pol : {}".format(*key) + " : Gaussian std (1/np.sqrt(N)) = " 
+              + str(std_mean_all_time) + ", Average spectra std = " + str(std_mean) + ", Ratio = " + str(std_mean_all_time/std_mean))
 
 
 from scipy.stats import norm
 
 # We plot a histogram of power values over different times at a specific delay to give us insight on possible noise at that delay.
+print("Enter which type of histogram to be displayed :")
+print("0 is for single delay histogram. 1 is for a wide range of delay histogram : ")
+option_hist = input()
+if option_hist == 0 :
+	print("Enter the delay you want to display a histogram of the power values and the interval of time : ")
+	print("Choose delay : ")
+	chosen_delay = input()
+	print("Choose minimum time : ")
+	time_min = input()
+	print("Choose maximum time : ")
+	time_max= input()
+	# The delay chosen might not exist in the data. In that case, we warn and choose the nearest delay value.
 
-chosen_delay = -400
+	# This minimizes the separation from the closest value.
+	closest_delay = min(dlys, key=lambda x:abs(x-chosen_delay))
 
-# The delay chosen might not exist in the data. In that case, we warn and choose the nearest delay value.
+	if chosen_delay != closest_delay:
+		# Warn that the closest value to that will be chosen.
+		print("There are no data points at " + str(chosen_delay) + ". The closest value to the desired delay is " + str(closest_delay))
 
-# This minimizes the separation from the closest value.
-closest_delay = min(dlys, key=lambda x:abs(x-chosen_delay))
+	print("Select spectral window index from " + str(len(uvp.spw_array)) + " choices : ")
+	spw = input()
+	print("Select baseline pair from " + str(uvp.get_blpairs()) + " by typing the index : ")
+	i=input()
+	key = (spw, blpairs[i], pol)
+	power = np.abs(np.real(uvp.get_data(key)))
+	# We find the index in the delay array, which will correspond to the same index where the power values are at.
+	delay_index = np.where(dlys==closest_delay)
 
-if chosen_delay != closest_delay:
-	# Warn that the closest value to that will be chosen.
-	print("There are no data points at " + str(chosen_delay) + ". The closest value to the desired delay is " + str(closest_delay))
+	data = power.T[delay_index][:,time_min:time_max].flatten()
 
-# We find the index in the delay array, which will correspond to the same index where the power values are at.
-delay_index = np.where(dlys==closest_delay)
+	fig_hist1, ax_hist1 = plt.subplots(2,figsize=(12,8))
 
-data = power.T[delay_index].flatten()
+	p2 = ax_hist1[0].hist(data,bins=30,density=True,linewidth=2,edgecolor='k')
 
-fig_hist1, ax_hist1 = plt.subplots(2,figsize=(12,8))
+	# We fit the data with a normal distribution and find the best fit parameters for the mean and standard deviation.
+	mu, std = norm.fit(data)
+	x = np.linspace(min(data), max(data), 30)
+	p = norm.pdf(x, mu, std)
+	ax_hist1[0].plot(x, p, 'k', linewidth=2)
+	ax_hist1[0].set_ylabel("Probability",fontsize=14)
+	ax_hist1[0].set_xlabel(r"$P(k)\ \rm [mK^2\ h^{-3}\ Mpc^3]$",fontsize=14)
 
-p2 = ax_hist1[0].hist(data,bins=30,density=True,linewidth=2,edgecolor='k')
+	# We plot the residuals of the histogram and the fit.
+	ax_hist1[1].plot(x,p2[0]-p)
+	ax_hist1[1].axhline(y=0, color='k', linestyle='-',linewidth=3)
+	ax_hist1[1].set_ylabel("Residuals",fontsize=14)
+	ax_hist1[1].set_xlabel(r"$P(k)\ \rm [mK^2\ h^{-3}\ Mpc^3]$",fontsize=14)
 
-# We fit the data with a normal distribution and find the best fit parameters for the mean and standard deviation.
-mu, std = norm.fit(data)
-x = np.linspace(min(data), max(data), 30)
-p = norm.pdf(x, mu, std)
-ax_hist1[0].plot(x, p, 'k', linewidth=2)
-ax_hist1[0].set_ylabel("Probability",fontsize=14)
-ax_hist1[0].set_xlabel(r"$P(k)\ \rm [mK^2\ h^{-3}\ Mpc^3]$",fontsize=14)
+	plt.savefig("histsingle.png")
 
-# We plot the residuals of the histogram and the fit.
-ax_hist1[1].plot(x,p2[0]-p)
-ax_hist1[1].axhline(y=0, color='k', linestyle='-',linewidth=3)
-ax_hist1[1].set_ylabel("Residuals",fontsize=14)
-ax_hist1[1].set_xlabel(r"$P(k)\ \rm [mK^2\ h^{-3}\ Mpc^3]$",fontsize=14)
+	fig_cdf, ax_cdf_single_delay = plt.subplots(figsize=(12,4))
 
-plt.savefig("histsingle.png")
-# In[22]:
+	cdf =  np.cumsum(p2[0])# calculate the cdf
 
+	p3 = ax_cdf_single_delay.plot(p2[1][1:],cdf)
 
-# We now want to plot a histogram of power values over a range of delay times.
-
-from scipy.stats import skewnorm
-
-# We choose the range of delays.
-chosen_min_delay = -5000
-chosen_max_delay = -4000
-# And get the closest values if the chosen delays don't exist.
-closest_min_delay = min(dlys, key=lambda x:abs(x-chosen_min_delay))
-closest_max_delay = min(dlys, key=lambda x:abs(x-chosen_max_delay))
-
-if chosen_min_delay != closest_min_delay:
-	# Warn that the closest value to the minimum delay will be chosen.
-	print("There are no data points at " + str(chosen_min_delay) + ". The closest value to the desired delay is " + str(closest_min_delay))
-
-if chosen_max_delay != closest_max_delay:
-	# Warn that the closest value to the maximum delay will be chosen.
-	print("There are no data points at " + str(chosen_max_delay) + ". The closest value to the desired delay is " + str(closest_max_delay))
-
-min_delay_index = np.where(dlys==closest_min_delay)
-max_delay_index = np.where(dlys==closest_max_delay)
-
-data=power.T[min_delay_index[0][0]:max_delay_index[0][0]].flatten()
-
-fig_hist2, ax_hist2 = plt.subplots(2,figsize=(12,8))
-
-x = np.linspace(min(data),max(data), 30)
-# We now fit a skewed probability distribution.
-ax_hist2[0].plot(x, skewnorm.pdf(x, *skewnorm.fit(data)),lw=3,color='k',label='skewnorm pdf')
-
-p4 = ax_hist2[0].hist(data,bins=30,density=True,linewidth=2,edgecolor='k')
-ax_hist2[0].set_ylabel("Probability",fontsize=14)
-ax_hist2[0].set_xlabel(r"$P(k)\ \rm [mK^2\ h^{-3}\ Mpc^3]$",fontsize=14)
-
-# We plot the residuals between our histogram and our fit.
-ax_hist2[1].plot(x,p4[0]-skewnorm.pdf(x, *skewnorm.fit(data)))
-ax_hist2[1].axhline(y=0, color='k', linestyle='-',linewidth=3)
-ax_hist2[1].set_ylabel("Residuals",fontsize=14)
-ax_hist2[1].set_xlabel(r"$P(k)\ \rm [mK^2\ h^{-3}\ Mpc^3]$",fontsize=14)
-
-plt.savefig("histrange.png")
-# In[35]:
+	ax_cdf_single_delay.set_xlabel(r"$P(k)\ \rm [mK^2\ h^{-3}\ Mpc^3]$", fontsize=14)
+	ax_cdf_single_delay.set_ylabel("Cumulative probability", fontsize=14)
 
 
-# We now want to plot the cumulative distribution function based on our previous histograms.
+# We now want to plot a histogram of power values over a range of delay times if
+# the user chose to do so.
 
-fig_cdf, ax_cdf_delay_range = plt.subplots(figsize=(12,4))
+if option_hist == 1 :
+	from scipy.stats import skewnorm
+	print("Enter the range of delay you want to include in the histogram and the interval of time : ")
+	# We choose the range of delays.
+	print("Choose minimum delay : ")
+	chosen_min_delay = input()
+	print("Choose maximum delay : ")
+	chosen_max_delay = input()
+	print("Choose minimum time : ")
+	time_min = input()
+	print("Choose maximum time : ")
+	time_max= input()
 
-data = np.sort(power.T[min_delay_index[0][0]:max_delay_index[0][0]].flatten())
+	# And get the closest values if the chosen delays don't exist.
+	closest_min_delay = min(dlys, key=lambda x:abs(x-chosen_min_delay))
+	closest_max_delay = min(dlys, key=lambda x:abs(x-chosen_max_delay))
 
-cdf = np.cumsum(data) # calculate the cdf
+	if chosen_min_delay != closest_min_delay:
+		# Warn that the closest value to the minimum delay will be chosen.
+		print("There are no data points at " + str(chosen_min_delay) + ". The closest value to the desired delay is " + str(closest_min_delay))
 
-p3 = ax_cdf_delay_range.plot(data,cdf)
+	if chosen_max_delay != closest_max_delay:
+		# Warn that the closest value to the maximum delay will be chosen.
+		print("There are no data points at " + str(chosen_max_delay) + ". The closest value to the desired delay is " + str(closest_max_delay))
 
-ax_cdf_delay_range.set_xlabel(r"$P(k)\ \rm [mK^2\ h^{-3}\ Mpc^3]$", fontsize=14)
-ax_cdf_delay_range.set_ylabel("Cumulative probability", fontsize=14)
+	min_delay_index = np.where(dlys==closest_min_delay)
+	max_delay_index = np.where(dlys==closest_max_delay)
 
-plt.savefig("cdfrange.png")
-# In[34]:
+	print("Select spectral window index from " + str(len(uvp.spw_array)) + " choices : ")
+	spw = input()
+	print("Select baseline pair from " + str(uvp.get_blpairs()) + " by typing the index : ")
+	i=input()
+	key = (spw, blpairs[i], pol)
+	power = np.abs(np.real(uvp.get_data(key)))
 
+	data=power.T[min_delay_index[0][0]:max_delay_index[0][0]][:,time_min:time_max].flatten()
 
-fig_cdf, ax_cdf_single_delay = plt.subplots(figsize=(12,4))
+	fig_hist2, ax_hist2 = plt.subplots(2,figsize=(12,8))
 
-data = np.sort(power.T[delay_index].flatten())
+	x = np.linspace(min(data),max(data), 30)
+	# We now fit a skewed probability distribution.
+	ax_hist2[0].plot(x, skewnorm.pdf(x, *skewnorm.fit(data)),lw=3,color='k',label='skewnorm pdf')
 
-cdf =  np.cumsum(data)# calculate the cdf
+	p4 = ax_hist2[0].hist(data,bins=30,density=True,linewidth=2,edgecolor='k')
+	ax_hist2[0].set_ylabel("Probability",fontsize=14)
+	ax_hist2[0].set_xlabel(r"$P(k)\ \rm [mK^2\ h^{-3}\ Mpc^3]$",fontsize=14)
 
-p3 = ax_cdf_single_delay.plot(data,cdf)
+	# We plot the residuals between our histogram and our fit.
+	ax_hist2[1].plot(x,p4[0]-skewnorm.pdf(x, *skewnorm.fit(data)))
+	ax_hist2[1].axhline(y=0, color='k', linestyle='-',linewidth=3)
+	ax_hist2[1].set_ylabel("Residuals",fontsize=14)
+	ax_hist2[1].set_xlabel(r"$P(k)\ \rm [mK^2\ h^{-3}\ Mpc^3]$",fontsize=14)
 
-ax_cdf_single_delay.set_xlabel(r"$P(k)\ \rm [mK^2\ h^{-3}\ Mpc^3]$", fontsize=14)
-ax_cdf_single_delay.set_ylabel("Cumulative probability", fontsize=14)
+	# We now want to plot the cumulative distribution function based on our previous histograms.
 
+	fig_cdf, ax_cdf_delay_range = plt.subplots(figsize=(12,4))
 
+	cdf = np.cumsum(p4[0]) # calculate the cdf
 
-# In[ ]:
+	p3 = ax_cdf_delay_range.plot(p4[1][1:],cdf)
 
-#Here is my modification of my code
-
-
-
-
-
-
-
+	ax_cdf_delay_range.set_xlabel(r"$P(k)\ \rm [mK^2\ h^{-3}\ Mpc^3]$", fontsize=14)
+	ax_cdf_delay_range.set_ylabel("Cumulative probability", fontsize=14)
